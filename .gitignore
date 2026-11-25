@@ -1,0 +1,27 @@
+# Datasets and archives
+data/
+raw_dataset/
+dataset_split/
+*.zip
+
+# Python and virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Intermediate checkpoints and training artifacts
+*.h5
+*.keras
+training_history.png
+
+# OS and IDE files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
