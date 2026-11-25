@@ -2,6 +2,18 @@
 
 Sistem klasifikasi gambar 6 kategori makanan cepat saji berbasis Convolutional Neural Network (CNN) dengan transfer learning MobileNetV2, dilengkapi kelas *Out-of-Distribution* (`Other`), *OOD Embedding Gate*, CLI TensorFlow Lite, dan antarmuka web client-side menggunakan TensorFlow.js.
 
+## Demo Antarmuka Web
+
+### 1. Pengujian Kategori Target (In-Distribution)
+Pada gambar makanan yang termasuk dalam 6 kategori target, model mengenali objek sebagai **Crispy Chicken (80,52%)** dengan probabilitas kelas lain jauh di bawahnya (`Other` 7,77%, `Donut` 3,71%, `Burger` 2,93%).
+
+![Hasil klasifikasi Crispy Chicken pada antarmuka web](assets/demo-crispy-chicken.png)
+
+### 2. Pengujian di Luar Kategori (Out-of-Distribution)
+Pada foto hidangan di luar 6 kategori fast food, model mengklasifikasikannya ke kelas **Other (76,63%)** dan OOD Gate menampilkan status **Di Luar 6 Kategori Fast Food** agar sistem tidak memaksakan label fast food yang keliru.
+
+![Deteksi Out-of-Distribution pada antarmuka web](assets/demo-ood-detection.png)
+
 ## Ringkasan Proyek
 
 Model dirancang untuk mengklasifikasikan 6 kategori makanan cepat saji sekaligus menolak gambar di luar domain secara eksplisit:
@@ -59,6 +71,7 @@ fast-food-image-classification/
 ├── requirements.txt
 ├── index.html                  # Antarmuka web klasifikasi gambar
 ├── notebook.ipynb              # Notebook pelatihan 2-stage, kalibrasi OOD, & ekspor model
+├── assets/                     # Tangkapan layar demo untuk dokumentasi
 ├── web/
 │   ├── styles.css              # Styling responsif antarmuka web
 │   └── app.js                  # Unggah gambar, center-crop, inferensi TFJS, & OOD Gate
