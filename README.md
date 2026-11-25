@@ -1,15 +1,19 @@
 # Fast Food Image Classification
 
-Sistem klasifikasi gambar 6 kategori makanan cepat saji berbasis Convolutional Neural Network (CNN) dengan transfer learning MobileNetV2, dilengkapi kelas *Out-of-Distribution* (`Other`), *OOD Embedding Gate*, CLI TensorFlow Lite, dan antarmuka web client-side menggunakan TensorFlow.js.
+Sistem klasifikasi gambar 6 kategori makanan cepat saji berbasis Convolutional Neural Network (CNN) dengan transfer learning MobileNetV2, dilengkapi kelas _Out-of-Distribution_ (`Other`), _OOD Embedding Gate_, CLI TensorFlow Lite, dan antarmuka web client-side menggunakan TensorFlow.js.
 
 ## Demo Antarmuka Web
 
+Link Demo: https://ilhamdwi22.github.io/fast-food-image-classification/
+
 ### 1. Pengujian Kategori Target (In-Distribution)
+
 Pada gambar makanan yang termasuk dalam 6 kategori target, model mengenali objek sebagai **Crispy Chicken (80,52%)** dengan probabilitas kelas lain jauh di bawahnya (`Other` 7,77%, `Donut` 3,71%, `Burger` 2,93%).
 
 ![Hasil klasifikasi Crispy Chicken pada antarmuka web](assets/demo-crispy-chicken.png)
 
 ### 2. Pengujian di Luar Kategori (Out-of-Distribution)
+
 Pada foto hidangan di luar 6 kategori fast food, model mengklasifikasikannya ke kelas **Other (76,63%)** dan OOD Gate menampilkan status **Di Luar 6 Kategori Fast Food** agar sistem tidak memaksakan label fast food yang keliru.
 
 ![Deteksi Out-of-Distribution pada antarmuka web](assets/demo-ood-detection.png)
@@ -19,7 +23,7 @@ Pada foto hidangan di luar 6 kategori fast food, model mengklasifikasikannya ke 
 Model dirancang untuk mengklasifikasikan 6 kategori makanan cepat saji sekaligus menolak gambar di luar domain secara eksplisit:
 
 - **Kategori target (6 kelas):** `Baked Potato`, `Burger`, `Crispy Chicken`, `Donut`, `Fries`, `Pizza`
-- **Deteksi di luar kategori (OOD):** Kelas ke-7 `Other` (*hard negatives*) yang dipadukan dengan *OOD Embedding Gate* (kemiripan cosine 128-dim terhadap centroid kelas, ambang confidence, dan entropi)
+- **Deteksi di luar kategori (OOD):** Kelas ke-7 `Other` (_hard negatives_) yang dipadukan dengan _OOD Embedding Gate_ (kemiripan cosine 128-dim terhadap centroid kelas, ambang confidence, dan entropi)
 - **Arsitektur:** Keras `Sequential` berbasis `MobileNetV2` (ImageNet, 2-stage fine-tuning) + custom head (`Conv2D`, `BatchNormalization`, `MaxPooling2D`, `GlobalAveragePooling2D`, `Dense`, `Dropout`)
 - **Format ekspor:** TensorFlow SavedModel, TensorFlow Lite (`model.tflite` + `label.txt`), TensorFlow.js (`model.json` + `group1-shard1of1.bin`), dan konfigurasi inferensi bersama (`model_meta.json`)
 - **Antarmuka web:** Halaman statis HTML, CSS, dan JavaScript yang menjalankan inferensi langsung di browser tanpa mengirim gambar ke server
@@ -31,7 +35,7 @@ Data pelatihan disusun dari dua sumber Kaggle dengan pembagian stratifikasi 80% 
 1. **6 Kelas Target Fast Food** dari [`utkarshsaxenadn/fast-food-classification-dataset`](https://www.kaggle.com/datasets/utkarshsaxenadn/fast-food-classification-dataset) (`Fast Food Classification V2`): 12.000 gambar beresolusi non-uniform (2.000 gambar per kelas, 474 variasi resolusi unik).
 2. **Kelas `Other` (Hard Negatives):** Gabungan 4 kelas sisa Fast Food V2 (`Hot Dog`, `Sandwich`, `Taco`, `Taquito`) dan kategori makanan non-fast-food dari [`trolukovich/food11-image-dataset`](https://www.kaggle.com/datasets/trolukovich/food11-image-dataset) (`Seafood`, `Meat`, `Rice`, `Soup`, `Noodles-Pasta`, `Vegetable-Fruit`).
 
-Preprocessing menerapkan *center-square crop*, resize `224x224`, dan normalisasi MobileNetV2 ke rentang `[-1, 1]` (`(x / 127.5) - 1.0`). Augmentasi (`random_flip_left_right`, random crop/zoom, brightness, contrast, saturation) hanya diterapkan pada data training melalui pipeline `tf.data`.
+Preprocessing menerapkan _center-square crop_, resize `224x224`, dan normalisasi MobileNetV2 ke rentang `[-1, 1]` (`(x / 127.5) - 1.0`). Augmentasi (`random_flip_left_right`, random crop/zoom, brightness, contrast, saturation) hanya diterapkan pada data training melalui pipeline `tf.data`.
 
 ## Arsitektur Model & Pelatihan
 
@@ -49,18 +53,18 @@ Konfigurasi pelatihan:
 
 - **2-Stage Transfer Learning:** Stage 1 melatih head dengan backbone frozen (`Adam lr=1e-3`, 8 epoch), dilanjutkan Stage 2 fine-tuning 40 layer atas MobileNetV2 dengan seluruh `BatchNormalization` backbone tetap freeze (`Adam lr=3e-5`, hingga 12 epoch).
 - **Loss & Callbacks:** `CategoricalCrossentropy(label_smoothing=0.1)`, `ModelCheckpoint(monitor="val_loss", save_best_only=True)`, `ReduceLROnPlateau`, `EarlyStopping`, dan `ThresholdCallback(target_acc=0.96)`.
-- **Kalibrasi OOD:** Setelah pelatihan selesai, centroid L2-normalized 128-dim dihitung untuk setiap kelas fast food dari data training, dan ambang *cosine similarity* dikalibrasi pada persentil ke-5 data validasi (`min_cosine_similarity = 0.6761` pada artefak saat ini).
+- **Kalibrasi OOD:** Setelah pelatihan selesai, centroid L2-normalized 128-dim dihitung untuk setiap kelas fast food dari data training, dan ambang _cosine similarity_ dikalibrasi pada persentil ke-5 data validasi (`min_cosine_similarity = 0.6761` pada artefak saat ini).
 
 ## Artefak Model
 
 Seluruh hasil ekspor tersimpan di folder `models/`:
 
-| Format | Lokasi | Berkas Utama | Ukuran | Target Penggunaan |
-| :--- | :--- | :--- | ---: | :--- |
-| SavedModel | `models/saved_model/` | `saved_model.pb`, `variables/` | ~15,3 MB | Server / TensorFlow Serving |
-| TensorFlow Lite | `models/tflite/` | `model.tflite`, `label.txt` | ~3,84 MB | Mobile, edge, dan CLI lokal |
-| TensorFlow.js | `models/tfjs_model/` | `model.json`, `group1-shard1of1.bin` | ~14,7 MB | Aplikasi web / browser |
-| Metadata & OOD | `models/model_meta.json` | Konfigurasi skala, label, centroid OOD | ~14 KB | Dibaca otomatis oleh Web & CLI |
+| Format          | Lokasi                   | Berkas Utama                           |   Ukuran | Target Penggunaan              |
+| :-------------- | :----------------------- | :------------------------------------- | -------: | :----------------------------- |
+| SavedModel      | `models/saved_model/`    | `saved_model.pb`, `variables/`         | ~15,3 MB | Server / TensorFlow Serving    |
+| TensorFlow Lite | `models/tflite/`         | `model.tflite`, `label.txt`            | ~3,84 MB | Mobile, edge, dan CLI lokal    |
+| TensorFlow.js   | `models/tfjs_model/`     | `model.json`, `group1-shard1of1.bin`   | ~14,7 MB | Aplikasi web / browser         |
+| Metadata & OOD  | `models/model_meta.json` | Konfigurasi skala, label, centroid OOD |   ~14 KB | Dibaca otomatis oleh Web & CLI |
 
 ## Struktur Direktori
 
@@ -121,7 +125,7 @@ Menjalankan antarmuka web secara lokal melalui HTTP server statis agar browser d
 python -m http.server 8000
 ```
 
-Buka `http://localhost:8000` di browser. Pengguna dapat mengunggah foto melalui tombol pilih berkas, *drag-and-drop*, atau `Ctrl+V`.
+Buka `http://localhost:8000` di browser. Pengguna dapat mengunggah foto melalui tombol pilih berkas, _drag-and-drop_, atau `Ctrl+V`.
 
 ### 2. Inferensi CLI (TensorFlow Lite)
 
