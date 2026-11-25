@@ -1,87 +1,54 @@
 # Fast Food Image Classification
 
-Sistem klasifikasi gambar 6 kategori makanan cepat saji menggunakan Convolutional Neural Network (CNN) dengan transfer learning MobileNetV2, dilengkapi pipeline skrip modular dan ekspor model ke SavedModel, TensorFlow Lite, dan TensorFlow.js.
+Sistem klasifikasi gambar 6 kategori makanan cepat saji berbasis Convolutional Neural Network (CNN) dengan transfer learning MobileNetV2, dilengkapi kelas *Out-of-Distribution* (`Other`), *OOD Embedding Gate*, CLI TensorFlow Lite, dan antarmuka web client-side menggunakan TensorFlow.js.
 
 ## Ringkasan Proyek
 
-Model dilatih pada 12.000 gambar dunia nyata beresolusi tidak seragam dari dataset Kaggle [`utkarshsaxenadn/fast-food-classification-dataset`](https://www.kaggle.com/datasets/utkarshsaxenadn/fast-food-classification-dataset) (`Fast Food Classification V2`).
+Model dirancang untuk mengklasifikasikan 6 kategori makanan cepat saji sekaligus menolak gambar di luar domain secara eksplisit:
 
-- **Jumlah kelas:** 6 (`Baked Potato`, `Burger`, `Crispy Chicken`, `Donut`, `Fries`, `Pizza`)
-- **Total citra:** 12.000 gambar (2.000 gambar per kelas) dengan 474 variasi resolusi unik
-- **Pembagian data:** 80% Train (9.600), 10% Validation (1.200), 10% Test (1.200) dengan stratifikasi per kelas (`seed=42`)
-- **Backbone:** MobileNetV2 (bobot ImageNet, frozen) + custom head (`Conv2D`, `MaxPooling2D`, `GlobalAveragePooling2D`, `Dense`, `Dropout`)
-- **Format ekspor:** TensorFlow SavedModel, TensorFlow Lite (`model.tflite` + `label.txt`), dan TensorFlow.js (`model.json` + `group1-shard1of1.bin`)
+- **Kategori target (6 kelas):** `Baked Potato`, `Burger`, `Crispy Chicken`, `Donut`, `Fries`, `Pizza`
+- **Deteksi di luar kategori (OOD):** Kelas ke-7 `Other` (*hard negatives*) yang dipadukan dengan *OOD Embedding Gate* (kemiripan cosine 128-dim terhadap centroid kelas, ambang confidence, dan entropi)
+- **Arsitektur:** Keras `Sequential` berbasis `MobileNetV2` (ImageNet, 2-stage fine-tuning) + custom head (`Conv2D`, `BatchNormalization`, `MaxPooling2D`, `GlobalAveragePooling2D`, `Dense`, `Dropout`)
+- **Format ekspor:** TensorFlow SavedModel, TensorFlow Lite (`model.tflite` + `label.txt`), TensorFlow.js (`model.json` + `group1-shard1of1.bin`), dan konfigurasi inferensi bersama (`model_meta.json`)
+- **Antarmuka web:** Halaman statis HTML, CSS, dan JavaScript yang menjalankan inferensi langsung di browser tanpa mengirim gambar ke server
 
 ## Dataset
 
-Data mentah dari subfolder `Train`, `Valid`, dan `Test` digabung per kelas, diverifikasi integritasnya menggunakan Pillow, lalu dibagi ulang secara seimbang (80:10:10).
+Data pelatihan disusun dari dua sumber Kaggle dengan pembagian stratifikasi 80% Train, 10% Validation, dan 10% Test (`seed=42`):
 
-| Kelas | Jumlah Gambar | Variasi Resolusi Unik | Contoh Resolusi (W x H) |
-| :--- | ---: | ---: | :--- |
-| Baked Potato | 2.000 | 194 | 178x283, 204x247, 225x224 |
-| Burger | 2.000 | 218 | 433x116, 206x244, 315x160 |
-| Crispy Chicken | 2.000 | 206 | 178x283, 205x246, 315x160 |
-| Donut | 2.000 | 292 | 920x920, 736x736, 176x286 |
-| Fries | 2.000 | 207 | 176x286, 204x247, 243x208 |
-| Pizza | 2.000 | 227 | 322x157, 178x283, 205x246 |
-| **Total** | **12.000** | **474 (keseluruhan)** | Non-uniform |
+1. **6 Kelas Target Fast Food** dari [`utkarshsaxenadn/fast-food-classification-dataset`](https://www.kaggle.com/datasets/utkarshsaxenadn/fast-food-classification-dataset) (`Fast Food Classification V2`): 12.000 gambar beresolusi non-uniform (2.000 gambar per kelas, 474 variasi resolusi unik).
+2. **Kelas `Other` (Hard Negatives):** Gabungan 4 kelas sisa Fast Food V2 (`Hot Dog`, `Sandwich`, `Taco`, `Taquito`) dan kategori makanan non-fast-food dari [`trolukovich/food11-image-dataset`](https://www.kaggle.com/datasets/trolukovich/food11-image-dataset) (`Seafood`, `Meat`, `Rice`, `Soup`, `Noodles-Pasta`, `Vegetable-Fruit`).
 
-Augmentasi data (`rotation_range=25`, `width_shift_range=0.15`, `height_shift_range=0.15`, `shear_range=0.15`, `zoom_range=0.15`, `horizontal_flip=True`) hanya diterapkan pada data training. Validation dan test set hanya melalui normalisasi piksel `1./255` serta resize ke `224x224`.
+Preprocessing menerapkan *center-square crop*, resize `224x224`, dan normalisasi MobileNetV2 ke rentang `[-1, 1]` (`(x / 127.5) - 1.0`). Augmentasi (`random_flip_left_right`, random crop/zoom, brightness, contrast, saturation) hanya diterapkan pada data training melalui pipeline `tf.data`.
 
-## Arsitektur Model & Konfigurasi Pelatihan
+## Arsitektur Model & Pelatihan
 
-Model disusun dengan Keras `Sequential` di atas backbone `MobileNetV2` (`input_shape=(224, 224, 3)`, `include_top=False`, `weights="imagenet"`, `trainable=False`):
+Model menggunakan Keras `Sequential` dengan backbone `MobileNetV2` (`input_shape=(224, 224, 3)`, `include_top=False`, `weights="imagenet"`):
 
-| Layer | Output Shape | Jumlah Parameter |
-| :--- | :--- | ---: |
-| `MobileNetV2` (frozen) | `(None, 7, 7, 1280)` | 2.257.984 |
-| `Conv2D(128, 3x3, relu, same)` | `(None, 7, 7, 128)` | 1.474.688 |
-| `MaxPooling2D(2x2)` | `(None, 3, 3, 128)` | 0 |
-| `GlobalAveragePooling2D` | `(None, 128)` | 0 |
-| `Dense(256, relu)` | `(None, 256)` | 33.024 |
-| `Dropout(0.4)` | `(None, 256)` | 0 |
-| `Dense(6, softmax)` | `(None, 6)` | 1.542 |
+1. `MobileNetV2` backbone
+2. `Conv2D(128, 3x3, padding="same", use_bias=False)` (`head_conv`)
+3. `BatchNormalization` (`head_bn`) + `ReLU` (`head_relu`)
+4. `MaxPooling2D(2x2)` (`head_pool`)
+5. `GlobalAveragePooling2D` (`embedding_gap`, vektor fitur 128-dim untuk OOD Gate)
+6. `Dense(256, relu)` (`head_dense`) + `Dropout(0.4)` (`head_dropout`)
+7. `Dense(7, softmax)` (`predictions`)
 
-- **Total parameter:** 3.767.238 (14,37 MB)
-- **Trainable parameter:** 1.509.254 (5,76 MB)
-- **Non-trainable parameter:** 2.257.984 (8,61 MB)
-- **Optimizer & Loss:** Adam (`learning_rate=1e-3`), `categorical_crossentropy`
-- **Callbacks:**
-  - `ThresholdCallback(target_acc=0.95)`: menghentikan pelatihan lebih awal jika `accuracy` dan `val_accuracy` sama-sama mencapai >=95%.
-  - `ReduceLROnPlateau(monitor="val_loss", factor=0.2, patience=2, min_lr=1e-6)`: menurunkan learning rate ketika `val_loss` stagnan.
+Konfigurasi pelatihan:
 
-## Hasil Evaluasi & Artefak Model
+- **2-Stage Transfer Learning:** Stage 1 melatih head dengan backbone frozen (`Adam lr=1e-3`, 8 epoch), dilanjutkan Stage 2 fine-tuning 40 layer atas MobileNetV2 dengan seluruh `BatchNormalization` backbone tetap freeze (`Adam lr=3e-5`, hingga 12 epoch).
+- **Loss & Callbacks:** `CategoricalCrossentropy(label_smoothing=0.1)`, `ModelCheckpoint(monitor="val_loss", save_best_only=True)`, `ReduceLROnPlateau`, `EarlyStopping`, dan `ThresholdCallback(target_acc=0.96)`.
+- **Kalibrasi OOD:** Setelah pelatihan selesai, centroid L2-normalized 128-dim dihitung untuk setiap kelas fast food dari data training, dan ambang *cosine similarity* dikalibrasi pada persentil ke-5 data validasi (`min_cosine_similarity = 0.6761` pada artefak saat ini).
 
-Hasil yang tercatat pada eksperimen di [notebook.ipynb](notebook.ipynb):
+## Artefak Model
 
-- **Kurva pelatihan (15 epoch):** akurasi training mencapai ~94,7% dan akurasi validasi stabil di ~93,2%.
-- **Evaluasi Test Set (1.200 gambar):** **Test Accuracy 90,92%** dengan **Test Loss 0,3705**.
-- **Uji inferensi TFLite (5 sampel acak Test Set):** 5 dari 5 prediksi benar (Donut 100,0%, Burger 95,0%, Crispy Chicken 97,1%, Baked Potato 71,2%, Pizza 99,8%).
+Seluruh hasil ekspor tersimpan di folder `models/`:
 
-Artefak model yang tersedia di folder `models/`:
-
-| Format | Lokasi | Berkas Utama | Ukuran Total | Target Penggunaan |
+| Format | Lokasi | Berkas Utama | Ukuran | Target Penggunaan |
 | :--- | :--- | :--- | ---: | :--- |
 | SavedModel | `models/saved_model/` | `saved_model.pb`, `variables/` | ~15,3 MB | Server / TensorFlow Serving |
 | TensorFlow Lite | `models/tflite/` | `model.tflite`, `label.txt` | ~3,84 MB | Mobile, edge, dan CLI lokal |
 | TensorFlow.js | `models/tfjs_model/` | `model.json`, `group1-shard1of1.bin` | ~14,7 MB | Aplikasi web / browser |
-
-## Peningkatan Pipeline v2 (Fine-Tuning + OOD Gate)
-
-Kode pelatihan ([src/data_preparation.py](src/data_preparation.py), [src/train.py](src/train.py), [notebook.ipynb](notebook.ipynb)) dan pipeline inferensi ([src/inference.py](src/inference.py), [web/app.js](web/app.js)) mendukung pembaruan v2 untuk meningkatkan akurasi sekaligus menangani gambar di luar 6 kelas target (*Out-of-Distribution*, misalnya foto ikan goreng):
-
-- **Normalisasi MobileNetV2 `[-1, 1]`**: Menggunakan `mobilenet_v2.preprocess_input` agar selaras dengan bobot pra-latih ImageNet.
-- **2-Stage Fine-Tuning & Checkpoint Terbaik**: Stage 1 melatih head (`Conv2D + BatchNormalization + ReLU + MaxPooling2D + GAP + Dense + Dropout`), diikuti Stage 2 membuka 40 layer atas MobileNetV2 (`lr=3e-5`, BN backbone tetap freeze) dengan `ModelCheckpoint(monitor="val_loss")` dan `label_smoothing=0.1`.
-- **Kelas ke-7 `Other` (Hard Negatives)**: Menggabungkan 4 kelas sisa Fast Food V2 (`Hot Dog, Sandwich, Taco, Taquito`) dan kategori non-fast-food Food-11 (`trolukovich/food11-image-dataset`: `Seafood, Meat, Rice, Soup, Noodles-Pasta, Vegetable-Fruit`).
-- **OOD Embedding Gate & Metadata Tunggal (`models/model_meta.json`)**: Saat pelatihan v2 selesai, centroid embedding 128-dim dan ambang cosine similarity disimpan di `models/model_meta.json`. Baik CLI TFLite maupun web TensorFlow.js membaca berkas ini otomatis (tetap kompatibel dengan artefak v1 yang tersimpan saat ini, dan langsung mengaktifkan mode v2 setelah hasil pelatihan dari Colab diekstrak ke `models/`).
-- **Center-Square Crop**: Foto non-persegi (seperti `1200x800`) dipotong persegi di tengah sebelum resize `224x224` agar proporsi objek tidak terdistorsi.
-
-### Melatih Ulang v2 di Google Colab GPU
-
-1. Buka [notebook.ipynb](notebook.ipynb) di Google Colab dengan runtime **T4 GPU**.
-2. Jalankan seluruh cell (**Run all**). Di akhir eksekusi, Colab otomatis membuat dan mengunduh `models_v2.zip`.
-3. Ekstrak isi `models_v2.zip` ke dalam folder `models/` (menimpa `saved_model/`, `tflite/`, `tfjs_model/`, dan `model_meta.json`).
-4. Muat ulang `http://localhost:8000` atau jalankan `python src/inference.py <gambar>` untuk memakai model v2 beserta OOD Embedding Gate.
+| Metadata & OOD | `models/model_meta.json` | Konfigurasi skala, label, centroid OOD | ~14 KB | Dibaca otomatis oleh Web & CLI |
 
 ## Struktur Direktori
 
@@ -90,17 +57,17 @@ fast-food-image-classification/
 ├── .gitignore
 ├── README.md
 ├── requirements.txt
-├── index.html                  # Antarmuka web statis (siap GitHub Pages)
-├── notebook.ipynb              # Notebook v2 siap jalan di Google Colab GPU (Fine-Tuning + OOD)
+├── index.html                  # Antarmuka web klasifikasi gambar
+├── notebook.ipynb              # Notebook pelatihan 2-stage, kalibrasi OOD, & ekspor model
 ├── web/
 │   ├── styles.css              # Styling responsif antarmuka web
 │   └── app.js                  # Unggah gambar, center-crop, inferensi TFJS, & OOD Gate
 ├── src/
-│   ├── data_preparation.py     # Unduh dataset (+ kelas Other Food-11), audit resolusi, & split 80:10:10
-│   ├── train.py                # 2-stage fine-tuning, kalibrasi OOD, evaluasi, & ekspor model
+│   ├── data_preparation.py     # Unduh dataset (+ kelas Other), audit resolusi, & split 80:10:10
+│   ├── train.py                # Pipeline tf.data, 2-stage fine-tuning, kalibrasi OOD, & ekspor
 │   └── inference.py            # CLI prediksi TFLite + pemeriksaan OOD berbasis model_meta.json
 └── models/
-    ├── model_meta.json         # Konfigurasi preprocessing, label, & ambang OOD (v1/v2)
+    ├── model_meta.json         # Konfigurasi preprocessing, label, & ambang OOD
     ├── saved_model/            # Model format TensorFlow SavedModel
     ├── tflite/                 # Model TFLite teroptimasi + label.txt
     └── tfjs_model/             # Model format TensorFlow.js (model.json + shard .bin)
@@ -109,16 +76,14 @@ fast-food-image-classification/
 ## Prasyarat & Instalasi
 
 - Python 3.10 atau lebih baru
-- Akun dan kredensial Kaggle aktif untuk mengunduh dataset lewat `kagglehub` (hanya dibutuhkan saat menjalankan `src/data_preparation.py`)
-- GPU CUDA direkomendasikan untuk menjalankan pelatihan ulang
+- Kredensial Kaggle aktif untuk `kagglehub` (hanya dibutuhkan saat mengunduh ulang dataset)
+- GPU CUDA direkomendasikan bila menjalankan pelatihan ulang
 
-Buat virtual environment dan pasang dependensi:
+Buat dan aktifkan virtual environment, lalu pasang dependensi:
 
 ```bash
 python -m venv .venv
 ```
-
-Aktifkan virtual environment:
 
 - **Windows (PowerShell):**
   ```powershell
@@ -129,31 +94,62 @@ Aktifkan virtual environment:
   source .venv/bin/activate
   ```
 
-Pasang seluruh paket yang dibutuhkan:
-
 ```bash
 pip install -r requirements.txt
 ```
 
 ## Cara Menjalankan
 
-### 1. Persiapan Dataset
+### 1. Antarmuka Web (TensorFlow.js)
 
-Mengunduh dataset dari Kaggle via `kagglehub`, memverifikasi gambar yang valid, mencetak ringkasan variasi resolusi, lalu membaginya menjadi `train/`, `val/`, dan `test/` (80:10:10):
+Menjalankan antarmuka web secara lokal melalui HTTP server statis agar browser dapat memuat berkas model di `models/tfjs_model/`:
+
+```bash
+python -m http.server 8000
+```
+
+Buka `http://localhost:8000` di browser. Pengguna dapat mengunggah foto melalui tombol pilih berkas, *drag-and-drop*, atau `Ctrl+V`.
+
+### 2. Inferensi CLI (TensorFlow Lite)
+
+Menjalankan prediksi pada satu berkas gambar atau seluruh gambar dalam satu folder:
+
+```bash
+python src/inference.py path/to/sample_pizza.png
+```
+
+Opsi tambahan:
+
+- `--top-k 3`: jumlah prediksi teratas yang ditampilkan (default `3`)
+- `--model models/tflite/model.tflite`: path model TFLite kustom
+- `--labels models/tflite/label.txt`: path file label kustom
+- `--meta models/model_meta.json`: path metadata & konfigurasi OOD kustom
+- `--json`: menampilkan output dalam format JSON
+
+Contoh output CLI:
+
+```text
+Image: sample_pizza.png
+  1. Pizza             81.93%
+  2. Other              8.35%
+  3. Donut              2.47%
+```
+
+Jika gambar terdeteksi di luar 6 kategori fast food, CLI akan menambahkan status `[OOD] Outside 6 fast food categories`.
+
+### 3. Persiapan Dataset
+
+Mengunduh dataset dari Kaggle via `kagglehub`, merakit 6 kelas fast food beserta kelas `Other`, memverifikasi resolusi citra, dan membagi data 80:10:10:
 
 ```bash
 python src/data_preparation.py --raw-dir data/raw_dataset --split-dir data/dataset_split --seed 42
 ```
 
-Jika dataset `Fast Food Classification V2` sudah tersedia secara lokal, gunakan `--source-dir`:
+Gunakan `--source-dir` dan `--food11-dir` jika dataset sudah tersedia secara lokal, atau `--no-other` untuk melatih 6 kelas saja.
 
-```bash
-python src/data_preparation.py --source-dir /path/to/"Fast Food Classification V2"
-```
+### 4. Pelatihan & Ekspor Model
 
-### 2. Pelatihan, Evaluasi, & Ekspor Model
-
-Melatih model dari hasil split dataset, menyimpan kurva akurasi/loss ke berkas gambar, mengevaluasi pada test set, dan mengekspor ketiga format model ke `models/`:
+Melatih model 2-stage, mengkalibrasi OOD Gate, menyimpan plot akurasi/loss, dan mengekspor seluruh artefak ke `models/`:
 
 ```bash
 python src/train.py \
@@ -170,49 +166,4 @@ python src/train.py \
   --plot-path training_history.png
 ```
 
-### 3. Inferensi CLI dengan Model TFLite
-
-Menjalankan prediksi pada satu berkas gambar atau seluruh gambar dalam satu folder menggunakan `models/tflite/model.tflite`:
-
-```bash
-python src/inference.py path/to/sample_pizza.png
-```
-
-Opsi tambahan:
-
-- `--top-k 3`: jumlah prediksi teratas yang ditampilkan (default `3`)
-- `--model models/tflite/model.tflite`: path model TFLite kustom
-- `--labels models/tflite/label.txt`: path file label kustom
-- `--json`: menampilkan output dalam format JSON
-
-Contoh output CLI (hasil uji pada sampel gambar `Pizza`):
-
-```text
-Image: sample_pizza.png
-  1. Pizza             99.82%
-  2. Baked Potato       0.12%
-  3. Donut              0.03%
-```
-
-### 4. Antarmuka Web (HTML, CSS, JS + TensorFlow.js)
-
-Proyek ini menyertakan antarmuka web client-side tanpa autentikasi (`index.html`, `web/styles.css`, `web/app.js`) yang menjalankan model `models/tfjs_model/` langsung di browser. Pengguna dapat mengunggah foto (klik, seret berkas, atau tempel lewat `Ctrl+V`) tanpa mengirim gambar ke server.
-
-Menjalankan secara lokal (gunakan HTTP server agar browser mengizinkan pembacaan berkas model):
-
-```bash
-python -m http.server 8000
-```
-
-Lalu buka `http://localhost:8000` di browser.
-
-Untuk memublikasikan demo secara gratis di **GitHub Pages**:
-1. Buka **Settings > Pages** pada repositori GitHub.
-2. Pada bagian **Build and deployment**, pilih **Deploy from a branch**, branch `main`, folder `/ (root)`.
-3. Simpan perubahan, lalu akses URL GitHub Pages yang muncul.
-
-### 5. Notebook Eksperimen
-
-Seluruh alur eksplorasi, pelatihan di GPU, plot akurasi/loss, konversi model, dan uji inferensi terdokumentasi di [notebook.ipynb](notebook.ipynb).
-
-> **Catatan sebelum publikasi:** Uji ulang langkah instalasi (`pip install -r requirements.txt` dan `python src/inference.py`) di direktori bersih sebelum memublikasikan repositori ke GitHub.
+Seluruh alur pelatihan dan ekspor yang sama juga tersedia dalam bentuk interaktif di [notebook.ipynb](notebook.ipynb).
