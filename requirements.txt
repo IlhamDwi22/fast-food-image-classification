@@ -3,4 +3,5 @@ tensorflowjs>=4.17.0
 numpy>=1.23.5
 matplotlib>=3.7.0
 pillow>=9.5.0
+scikit-learn>=1.2.0
 kagglehub>=0.2.0

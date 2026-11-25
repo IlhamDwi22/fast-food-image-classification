@@ -66,6 +66,23 @@ Artefak model yang tersedia di folder `models/`:
 | TensorFlow Lite | `models/tflite/` | `model.tflite`, `label.txt` | ~3,84 MB | Mobile, edge, dan CLI lokal |
 | TensorFlow.js | `models/tfjs_model/` | `model.json`, `group1-shard1of1.bin` | ~14,7 MB | Aplikasi web / browser |
 
+## Peningkatan Pipeline v2 (Fine-Tuning + OOD Gate)
+
+Kode pelatihan ([src/data_preparation.py](src/data_preparation.py), [src/train.py](src/train.py), [notebook.ipynb](notebook.ipynb)) dan pipeline inferensi ([src/inference.py](src/inference.py), [web/app.js](web/app.js)) mendukung pembaruan v2 untuk meningkatkan akurasi sekaligus menangani gambar di luar 6 kelas target (*Out-of-Distribution*, misalnya foto ikan goreng):
+
+- **Normalisasi MobileNetV2 `[-1, 1]`**: Menggunakan `mobilenet_v2.preprocess_input` agar selaras dengan bobot pra-latih ImageNet.
+- **2-Stage Fine-Tuning & Checkpoint Terbaik**: Stage 1 melatih head (`Conv2D + BatchNormalization + ReLU + MaxPooling2D + GAP + Dense + Dropout`), diikuti Stage 2 membuka 40 layer atas MobileNetV2 (`lr=3e-5`, BN backbone tetap freeze) dengan `ModelCheckpoint(monitor="val_loss")` dan `label_smoothing=0.1`.
+- **Kelas ke-7 `Other` (Hard Negatives)**: Menggabungkan 4 kelas sisa Fast Food V2 (`Hot Dog, Sandwich, Taco, Taquito`) dan kategori non-fast-food Food-11 (`trolukovich/food11-image-dataset`: `Seafood, Meat, Rice, Soup, Noodles-Pasta, Vegetable-Fruit`).
+- **OOD Embedding Gate & Metadata Tunggal (`models/model_meta.json`)**: Saat pelatihan v2 selesai, centroid embedding 128-dim dan ambang cosine similarity disimpan di `models/model_meta.json`. Baik CLI TFLite maupun web TensorFlow.js membaca berkas ini otomatis (tetap kompatibel dengan artefak v1 yang tersimpan saat ini, dan langsung mengaktifkan mode v2 setelah hasil pelatihan dari Colab diekstrak ke `models/`).
+- **Center-Square Crop**: Foto non-persegi (seperti `1200x800`) dipotong persegi di tengah sebelum resize `224x224` agar proporsi objek tidak terdistorsi.
+
+### Melatih Ulang v2 di Google Colab GPU
+
+1. Buka [notebook.ipynb](notebook.ipynb) di Google Colab dengan runtime **T4 GPU**.
+2. Jalankan seluruh cell (**Run all**). Di akhir eksekusi, Colab otomatis membuat dan mengunduh `models_v2.zip`.
+3. Ekstrak isi `models_v2.zip` ke dalam folder `models/` (menimpa `saved_model/`, `tflite/`, `tfjs_model/`, dan `model_meta.json`).
+4. Muat ulang `http://localhost:8000` atau jalankan `python src/inference.py <gambar>` untuk memakai model v2 beserta OOD Embedding Gate.
+
 ## Struktur Direktori
 
 ```text
@@ -73,12 +90,17 @@ fast-food-image-classification/
 ├── .gitignore
 ├── README.md
 ├── requirements.txt
-├── notebook.ipynb              # Notebook eksperimen lengkap beserta output eksekusi
+├── index.html                  # Antarmuka web statis (siap GitHub Pages)
+├── notebook.ipynb              # Notebook v2 siap jalan di Google Colab GPU (Fine-Tuning + OOD)
+├── web/
+│   ├── styles.css              # Styling responsif antarmuka web
+│   └── app.js                  # Unggah gambar, center-crop, inferensi TFJS, & OOD Gate
 ├── src/
-│   ├── data_preparation.py     # Unduh dataset via kagglehub, verifikasi resolusi, & split 80:10:10
-│   ├── train.py                # Definisi arsitektur model, callbacks, training, evaluasi, & ekspor model
-│   └── inference.py            # CLI prediksi gambar baru menggunakan model TFLite
+│   ├── data_preparation.py     # Unduh dataset (+ kelas Other Food-11), audit resolusi, & split 80:10:10
+│   ├── train.py                # 2-stage fine-tuning, kalibrasi OOD, evaluasi, & ekspor model
+│   └── inference.py            # CLI prediksi TFLite + pemeriksaan OOD berbasis model_meta.json
 └── models/
+    ├── model_meta.json         # Konfigurasi preprocessing, label, & ambang OOD (v1/v2)
     ├── saved_model/            # Model format TensorFlow SavedModel
     ├── tflite/                 # Model TFLite teroptimasi + label.txt
     └── tfjs_model/             # Model format TensorFlow.js (model.json + shard .bin)
@@ -137,10 +159,14 @@ Melatih model dari hasil split dataset, menyimpan kurva akurasi/loss ke berkas g
 python src/train.py \
   --data-dir data/dataset_split \
   --models-dir models \
-  --epochs 15 \
-  --batch-size 32 \
-  --lr 0.001 \
-  --target-acc 0.95 \
+  --stage1-epochs 8 \
+  --stage2-epochs 12 \
+  --fine-tune-layers 40 \
+  --batch-size 64 \
+  --stage1-lr 0.001 \
+  --stage2-lr 0.00003 \
+  --label-smoothing 0.1 \
+  --target-acc 0.96 \
   --plot-path training_history.png
 ```
 
@@ -168,7 +194,24 @@ Image: sample_pizza.png
   3. Donut              0.03%
 ```
 
-### 4. Notebook Eksperimen
+### 4. Antarmuka Web (HTML, CSS, JS + TensorFlow.js)
+
+Proyek ini menyertakan antarmuka web client-side tanpa autentikasi (`index.html`, `web/styles.css`, `web/app.js`) yang menjalankan model `models/tfjs_model/` langsung di browser. Pengguna dapat mengunggah foto (klik, seret berkas, atau tempel lewat `Ctrl+V`) tanpa mengirim gambar ke server.
+
+Menjalankan secara lokal (gunakan HTTP server agar browser mengizinkan pembacaan berkas model):
+
+```bash
+python -m http.server 8000
+```
+
+Lalu buka `http://localhost:8000` di browser.
+
+Untuk memublikasikan demo secara gratis di **GitHub Pages**:
+1. Buka **Settings > Pages** pada repositori GitHub.
+2. Pada bagian **Build and deployment**, pilih **Deploy from a branch**, branch `main`, folder `/ (root)`.
+3. Simpan perubahan, lalu akses URL GitHub Pages yang muncul.
+
+### 5. Notebook Eksperimen
 
 Seluruh alur eksplorasi, pelatihan di GPU, plot akurasi/loss, konversi model, dan uji inferensi terdokumentasi di [notebook.ipynb](notebook.ipynb).
 

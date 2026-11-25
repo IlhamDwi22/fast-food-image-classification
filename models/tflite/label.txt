@@ -3,4 +3,5 @@ Burger
 Crispy Chicken
 Donut
 Fries
+Other
 Pizza
